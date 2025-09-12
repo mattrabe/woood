@@ -17,6 +17,12 @@ import {
   useState,
 } from 'react'
 
+// Grid dimensions - change these to modify the workspace size
+const GRID_SIZE = 20; // 20x20x20 cube
+const GRID_HALF = GRID_SIZE / 2; // Half size for bounds checking
+const Y_MIN = -GRID_HALF; // Y bounds: -10 to +10
+const Y_MAX = GRID_HALF;
+
 interface WoodProps {
   position: [number, number, number];
   rotation?: [number, number, number];
@@ -31,6 +37,8 @@ export function Wood({ position, rotation = [0, 0, 0], onPositionChange, isDragg
   const { camera, raycaster, pointer } = useThree();
   const [isHovered, setIsHovered] = useState(false);
   const dragOffsetRef = useRef<Vector3 | null>(null);
+  const initialMousePosRef = useRef<Vector2 | null>(null);
+  const initialPositionRef = useRef<Vector3 | null>(null);
 
   // Create a procedural wood texture
   const woodTexture = useTexture({
@@ -61,13 +69,17 @@ export function Wood({ position, rotation = [0, 0, 0], onPositionChange, isDragg
   const handlePointerDown = (event: any) => {
     event.stopPropagation();
 
-    // Calculate the offset using the actual pointer event coordinates
+    // Store the initial mouse position
     const pointerX = (event.clientX / window.innerWidth) * 2 - 1;
     const pointerY = -(event.clientY / window.innerHeight) * 2 + 1;
+    initialMousePosRef.current = new Vector2(pointerX, pointerY);
 
-    // Create a new raycaster with the pointer coordinates
+    // Store the initial position of the wood piece
+    initialPositionRef.current = new Vector3(position[0], position[1], position[2]);
+
+    // Calculate the initial 3D position using ray-plane intersection
     const tempRaycaster = new Raycaster();
-    tempRaycaster.setFromCamera(new Vector2(pointerX, pointerY), camera);
+    tempRaycaster.setFromCamera(initialMousePosRef.current, camera);
 
     const plane = new Plane(new Vector3(0, 1, 0), -position[1]);
     const intersection = tempRaycaster.ray.intersectPlane(plane, new Vector3());
@@ -76,7 +88,7 @@ export function Wood({ position, rotation = [0, 0, 0], onPositionChange, isDragg
       // Store the offset from the intersection point to the wood piece's center
       dragOffsetRef.current = new Vector3(
         position[0] - intersection.x,
-        0, // No Y offset since we're dragging on the same plane
+        0, // No Y offset initially
         position[2] - intersection.z
       );
     }
@@ -86,32 +98,101 @@ export function Wood({ position, rotation = [0, 0, 0], onPositionChange, isDragg
 
   const handlePointerUp = useCallback((event: any) => {
     event.stopPropagation();
-    dragOffsetRef.current = null; // Clear the offset
+    dragOffsetRef.current = null;
+    initialMousePosRef.current = null;
+    initialPositionRef.current = null;
     onDragEnd();
   }, [onDragEnd]);
 
   const handlePointerMove = useCallback((event: any) => {
-    if (!isDragging || !meshRef.current || !dragOffsetRef.current) return;
+    if (!isDragging || !meshRef.current || !initialMousePosRef.current || !initialPositionRef.current) return;
 
-    // Update mouse pointer position
-    pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
-    pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+    // Calculate current mouse position
+    const currentPointerX = (event.clientX / window.innerWidth) * 2 - 1;
+    const currentPointerY = -(event.clientY / window.innerHeight) * 2 + 1;
+    const currentMousePos = new Vector2(currentPointerX, currentPointerY);
 
-    // Create a plane at the wood piece's height for intersection
-    const plane = new Plane(new Vector3(0, 1, 0), -position[1]);
-    raycaster.setFromCamera(pointer, camera);
+    // Calculate mouse movement delta
+    const mouseDelta = new Vector2(
+      currentMousePos.x - initialMousePosRef.current.x,
+      currentMousePos.y - initialMousePosRef.current.y
+    );
 
-    const intersection = raycaster.ray.intersectPlane(plane, new Vector3());
-    if (intersection) {
-      // Apply the stored offset to maintain the relative position
+    // Use a simpler approach: create two planes at different distances
+    // and calculate the movement based on the intersection difference
+
+    // Create planes at the initial position and a small offset
+    const initialPlane = new Plane(new Vector3(0, 1, 0), -initialPositionRef.current.y);
+
+    // Create raycaster for initial mouse position
+    const initialRaycaster = new Raycaster();
+    initialRaycaster.setFromCamera(initialMousePosRef.current, camera);
+    const initialIntersection = initialRaycaster.ray.intersectPlane(initialPlane, new Vector3());
+
+    // Create raycaster for current mouse position
+    const currentRaycaster = new Raycaster();
+    currentRaycaster.setFromCamera(currentMousePos, camera);
+    const currentIntersection = currentRaycaster.ray.intersectPlane(initialPlane, new Vector3());
+
+    if (initialIntersection && currentIntersection) {
+      // Calculate the difference in 3D space
+      const delta3D = new Vector3(
+        currentIntersection.x - initialIntersection.x,
+        0, // Keep Y movement separate
+        currentIntersection.z - initialIntersection.z
+      );
+
+      // Get camera's forward direction (where it's looking)
+      const cameraForward = new Vector3();
+      camera.getWorldDirection(cameraForward);
+
+      // Calculate how much each axis is perpendicular to the camera's view direction
+      // Higher values mean the axis is more "visible" to the camera
+      const xAxis = new Vector3(1, 0, 0);
+      const yAxis = new Vector3(0, 1, 0);
+      const zAxis = new Vector3(0, 0, 1);
+
+      // Use dot product to find how perpendicular each axis is to camera forward
+      // Math.abs() because we want the absolute angle (0-90 degrees)
+      const xVisibility = Math.abs(xAxis.dot(cameraForward));
+      const yVisibility = Math.abs(yAxis.dot(cameraForward));
+      const zVisibility = Math.abs(zAxis.dot(cameraForward));
+
+      // Apply visibility-based scaling to movement
+      // Use a power function to make the effect more pronounced
+      const scaleFactor = 1.5; // Moderate scaling
+      const xScale = Math.pow(1 - xVisibility, scaleFactor) + 0.1; // Invert so perpendicular = more movement
+      const yScale = Math.pow(1 - yVisibility, scaleFactor) + 0.1;
+      const zScale = Math.pow(1 - zVisibility, scaleFactor) + 0.1;
+
+      // Apply the scaling to the movement
+      const scaledDelta3D = new Vector3(
+        delta3D.x * xScale,
+        delta3D.y * yScale,
+        delta3D.z * zScale
+      );
+
+      // Add some vertical movement based on mouse Y delta, but use a fixed scale
+      // instead of yScale to prevent the piece from flying off when viewing edge-on
+      const verticalMovement = mouseDelta.y * 3; // Fixed scale instead of yScale
+
+      // Apply the movement to the initial position
       const newPosition: [number, number, number] = [
-        intersection.x + dragOffsetRef.current.x,
-        position[1], // Keep the same Y position
-        intersection.z + dragOffsetRef.current.z,
+        initialPositionRef.current.x + scaledDelta3D.x,
+        initialPositionRef.current.y + verticalMovement,
+        initialPositionRef.current.z + scaledDelta3D.z,
       ];
-      onPositionChange(newPosition);
+
+      // Apply bounds checking to keep the wood piece within the grid
+      const constrainedPosition: [number, number, number] = [
+        Math.max(-GRID_HALF, Math.min(GRID_HALF, newPosition[0])), // Clamp X to [-10, 10]
+        Math.max(Y_MIN, Math.min(Y_MAX, newPosition[1])),          // Clamp Y to [-10, 10]
+        Math.max(-GRID_HALF, Math.min(GRID_HALF, newPosition[2]))  // Clamp Z to [-10, 10]
+      ];
+
+      onPositionChange(constrainedPosition);
     }
-  }, [isDragging, meshRef, position, onPositionChange, raycaster, camera, pointer]);
+  }, [isDragging, meshRef, onPositionChange, camera]);
 
   // Manage event listeners for drag actions
   useEffect(() => {
