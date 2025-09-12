@@ -1,4 +1,4 @@
-# Wood, wood, good ol' wood.
+# Woood, woood, good ol' woood.
 
 ```bash
 npm run dev
