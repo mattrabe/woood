@@ -4,7 +4,8 @@ import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import { useState } from 'react'
 
-import { Wood } from '@/components/Wood';
+import { Grid } from '@/components/Grid'
+import { Wood } from '@/components/Wood'
 
 interface WoodPiece {
   id: number;
@@ -57,7 +58,7 @@ export default function Designer() {
           <directionalLight position={[10, 10, 5]} intensity={1.2} />
           <pointLight position={[-10, 10, -10]} intensity={0.5} />
 
-          <gridHelper args={[20, 20, '#666666', '#333333']} />
+          <Grid />
 
           {woodPieces.map((piece) => (
             <Wood
