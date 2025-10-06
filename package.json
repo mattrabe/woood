@@ -11,6 +11,8 @@
   "dependencies": {
     "@react-three/drei": "^10.7.6",
     "@react-three/fiber": "^9.3.0",
+    "@types/debug": "^4.1.12",
+    "debug": "^4.4.3",
     "next": "15.5.3",
     "react": "19.1.0",
     "react-dom": "19.1.0",
